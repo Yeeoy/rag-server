@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import supabase
 from routers import users
+from routers import projects
 
 app = FastAPI(
     title="Six-Figure AI Engineer API",
@@ -41,6 +42,7 @@ async def get_all_posts():
 
 
 app.include_router(users.router)
+app.include_router(projects.router)
 
 if __name__ == "__main__":
     import uvicorn
