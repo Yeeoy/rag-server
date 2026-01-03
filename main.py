@@ -2,8 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import supabase
-from routers import users
-from routers import projects
+from routers import users,projects,files,chats
 
 app = FastAPI(
     title="Six-Figure AI Engineer API",
@@ -43,6 +42,8 @@ async def get_all_posts():
 
 app.include_router(users.router)
 app.include_router(projects.router)
+app.include_router(files.router)
+app.include_router(chats.router)
 
 if __name__ == "__main__":
     import uvicorn
