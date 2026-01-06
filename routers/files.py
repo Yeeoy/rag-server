@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from database import BUCKET_NAME, s3_client, supabase
 from auth import get_current_user
+from tasks import process_document
 
 
 router = APIRouter(tags=["files"])
@@ -130,6 +131,13 @@ async def confirm_file_upload(
             )
 
         document = result.data[0]
+        document_id = document["id"]
+        task = process_document.delay(document_id)
+
+        # Store this task ID so that we can track it later if needed
+        supabase.table("project_documents").update({"task_id": task.id}).eq(
+            "id", document_id
+        ).execute()
 
         return {
             "message": "Upload confirmed, processing started with Celery",
@@ -177,7 +185,16 @@ async def add_website_url(
         if not result.data:
             raise HTTPException(status_code=500, detail=f"Failed to create URL record")
 
+        document = result.data[0]
+        document_id = document["id"]
+
         # start background processing
+        task = process_document.delay(document_id)
+
+        # Store this task ID so that we can track it later if needed
+        supabase.table("project_documents").update({"task_id": task.id}).eq(
+            "id", document_id
+        ).execute()
 
         return {
             "message": "URL added successfully, processing started",
@@ -209,7 +226,7 @@ async def delete_file(
             )
         file_record = file_result.data[0]
         s3_key = file_record["s3_key"]
-        
+
         # delete from s3
         if s3_key:
             try:
@@ -219,14 +236,59 @@ async def delete_file(
                 print(f"Failed to delete from s3: {s3_error}")
         # delete document record from db
         delete_result = (
-            supabase.table("project_documents")
-            .delete()
-            .eq("id", file_id)
-            .execute()
+            supabase.table("project_documents").delete().eq("id", file_id).execute()
         )
-        
+
         if not delete_result.data:
             raise HTTPException(status_code=500, detail=f"Failed to delete file")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file {str(e)}")
+
+
+@router.get("/api/projects/{project_id}/files/{file_id}/chunks")
+async def get_document_chunks(
+    project_id: str, file_id: str, clerk_id: str = Depends(get_current_user)
+):
+    try:
+        project_result = (
+            supabase.table("projects")
+            .select("id")
+            .eq("id", project_id)
+            .eq("clerk_id", clerk_id)
+            .execute()
+        )
+
+        if not project_result.data:
+            raise HTTPException(
+                status_code=404, detail=f"Project not found or access denied"
+            )
+
+        doc_result = (
+            supabase.table("project_documents")
+            .select("id")
+            .eq("id", file_id)
+            .eq("project_id", project_id)
+            .execute()
+        )
+
+        if not doc_result.data:
+            raise HTTPException(status_code=404, detail=f"Document not found")
+
+        chunks_result = (
+            supabase.table("document_chunks")
+            .select("*")
+            .eq("document_id", file_id)
+            .order("chunk_index")
+            .execute()
+        )
+
+        return {
+            "message": "Document chunks retrieved successfully",
+            "data": chunks_result.data or [],
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get document chunks: {str(e)}"
+        )
